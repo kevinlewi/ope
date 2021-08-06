@@ -1,43 +1,41 @@
 //! Implements order-preserving encryption via an ORE construction followed by a
 //! conversion to OPE.
 //!
-//! An OPE struct is parameterized by two variables, `block_size` and `expansion_factor`.
+//! An OPE struct is parameterized the variable `expansion_factor`.
 //!
-//! - Error probability is 1 - 2^(block_size * 8) / 2^(expansion_factor * 8)
-//! - Ciphertext length is a multiplicative factor larger than input length by: expansion_factor / block_size
-//! - Security goes down if block_size goes up
+//! - Error probability is upper-bounded by: 1 - 2^8 / 2^(expansion_factor * 8)
+//! - Ciphertext length is a multiplicative factor larger than input length by expansion_factor
 //!
 //! This means that:
-//! - Increasing `block_size` means slightly reduced correctness, reduced ciphertext length, decreased security
 //! - Increasing `expansion_factor` means more correctness, increased ciphertext length
 
+pub mod errors;
+
+#[cfg(test)]
+mod test_vectors;
+
+use crate::errors::OpeError;
 use hkdf::Hkdf;
-use rand_core::{CryptoRng, RngCore};
+use num_bigint::BigUint;
+use rand::{CryptoRng, RngCore};
 use sha2::Sha256;
 use std::string::String;
 
 pub struct OrderPreservingEncryption {
-    block_size: usize,
+    /// Number of bytes associated with the modulus M. The larger the expansion
+    /// size, the smaller the probability of errors, but the longer the ciphertexts
+    /// will be.
     expansion_factor: usize,
 }
 
 impl OrderPreservingEncryption {
-    // d = 2 ** (BLOCK_SIZE * 8)
-    // M = 2 ** (M_IN_BYTES * 8)
-    pub fn new(block_size: usize, expansion_factor: usize) -> Self {
-        Self {
-            block_size,
-            expansion_factor,
-        }
-    }
-
-    // input length * log_2(M) / log_2(d)
-    pub fn ciphertext_len_in_bytes(&self) -> usize {
-        8 * self.expansion_factor / self.block_size
+    // The modulus M = 2 ^ (expansion_factor * 8)
+    pub fn new(expansion_factor: usize) -> Self {
+        Self { expansion_factor }
     }
 
     // 1 / failure rate
-    // Failure rate is d / M
+    // Failure rate is 2 ^ 8 / M
     pub fn inverted_log_failure_rate(&self) -> usize {
         (self.expansion_factor - 1) * 8
     }
@@ -48,13 +46,17 @@ impl OrderPreservingEncryption {
         result.to_vec()
     }
 
-    pub fn encrypt(&self, key: &[u8], x: u64) -> String {
-        //x.to_string()
-
-        // FIXME assumes BLOCK_SIZE = 1 ( d = 256) below for loop
-
+    pub fn encrypt(&self, key: &[u8], x: String) -> Result<String, OpeError> {
         let mut u_strings = vec![];
-        let x_bytes = x.to_be_bytes();
+        let x_bytes = blockify_input(x)?;
+
+        if x_bytes.len() >= u8::MAX as usize {
+            // Will not handle such large inputs. However, note that this means the
+            // input must be at least u8::MAX bytes long, which works for integers
+            // in the range of [0, 2^2048 - 1]
+            return Err(OpeError::InvalidInputError);
+        }
+
         for (i, &elem) in x_bytes.iter().enumerate() {
             let input = [
                 &[i as u8][..],
@@ -62,25 +64,37 @@ impl OrderPreservingEncryption {
                 &vec![0u8; x_bytes.len() - i][..],
             ]
             .concat();
-            let r = Ciphertext::prf(&key, &input, self.expansion_factor);
+            let prf_output = Ciphertext::prf(key, &input, self.expansion_factor);
 
             let mut z = vec![0u8; self.expansion_factor];
             z[self.expansion_factor - 1] = elem;
 
-            let u = r.mod_add(&z, self.expansion_factor);
+            let u = prf_output.mod_add(&z, self.expansion_factor);
             u_strings.push(u.to_hex());
         }
 
-        u_strings.join("")
+        Ok(u_strings.join(""))
     }
+}
+
+// Blockify an input number (encoded as a string) by turning
+// it into a vector of bytes.
+fn blockify_input(input: String) -> Result<Vec<u8>, OpeError> {
+    let bytes = match BigUint::parse_bytes(input.as_bytes(), 10) {
+        Some(x) => Ok(x.to_bytes_be()),
+        None => Err(OpeError::InvalidInputError),
+    }?;
+
+    Ok(bytes)
 }
 
 struct Ciphertext(Vec<u8>);
 
 impl Ciphertext {
-    fn prf(key: &[u8], input: &[u8], expansion_factor: usize) -> Self {
-        let mut okm = vec![0u8; expansion_factor];
-        let h = Hkdf::<Sha256>::from_prk(&key).unwrap();
+    /// Computes a PRF with a key, an input, and with a specified output size
+    fn prf(key: &[u8], input: &[u8], output_size_in_bytes: usize) -> Self {
+        let mut okm = vec![0u8; output_size_in_bytes];
+        let h = Hkdf::<Sha256>::from_prk(key).unwrap();
         h.expand(input, &mut okm).unwrap();
         Self(okm.to_vec())
     }
@@ -121,7 +135,6 @@ pub(crate) fn add_two_vecs(lhs: &[u8], rhs: &[u8], length: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand_core::OsRng;
 
     #[test]
     fn test_add_two_vecs() {
@@ -138,16 +151,17 @@ mod tests {
     }
 
     #[test]
-    fn test_encrypt() {
-        let mut rng = OsRng;
+    fn test_encrypt() -> Result<(), OpeError> {
+        let mut rng = rand::thread_rng();
 
-        let ope = OrderPreservingEncryption::new(1, 5);
+        let ope = OrderPreservingEncryption::new(5);
 
         let key = ope.keygen(&mut rng);
-        let c = ope.encrypt(&key, 5);
+        let c1 = ope.encrypt(&key, "123456".to_string())?;
+        let c2 = ope.encrypt(&key, "123457".to_string())?;
 
-        // Expect ciphertext length = input length * log_2(M) / log_2(d)
-        // Error probability is 1 - d / M
-        assert_eq!(c.len() / 2, ope.ciphertext_len_in_bytes());
+        assert!(c1.to_string() < c2.to_string());
+
+        Ok(())
     }
 }

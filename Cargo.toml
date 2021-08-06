@@ -7,14 +7,18 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+displaydoc = "0.2"
 hkdf = "0.10.0"
+num-bigint = { version = "0.2", features = ["rand"] }
 sha2 = "0.9.2"
-rand_core = "0.5.1"
+rand = "0.6"
 hex = "0.4.2"
 
 [dev-dependencies]
-rand = "0.7"
+rand = "0.6"
 criterion = "0.3.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [[bench]]
 path = "bench/ope.rs"

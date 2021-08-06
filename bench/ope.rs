@@ -41,13 +41,13 @@ fn hkdf_sha256(c: &mut Criterion) {
 fn ope_encrypt(c: &mut Criterion) {
     let mut rng: ThreadRng = thread_rng();
 
-    let ope = OrderPreservingEncryption::new(1, 5);
+    let ope = OrderPreservingEncryption::new(5);
     let key = ope.keygen(&mut rng);
 
     let input = rng.next_u64();
 
     c.bench_function("u64 encrypt with expansion factor = 5", move |b| {
-        b.iter(|| ope.encrypt(&key, input))
+        b.iter(|| ope.encrypt(&key, input.to_string()))
     });
 }
 
