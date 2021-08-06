@@ -1,5 +1,5 @@
 use ope::OrderPreservingEncryption;
-use rand_core::{OsRng, RngCore};
+use rand::RngCore;
 use std::collections::HashMap;
 
 fn main() {
@@ -21,22 +21,19 @@ fn main() {
         panic!("Expansion factor must be at least 1");
     }
 
-    test_ordering(num_ints, 1, expansion_factor);
+    test_ordering(num_ints, expansion_factor);
 }
 
-fn test_ordering(num_ints: usize, block_size: usize, expansion_factor: usize) {
-    let mut rng = OsRng;
+fn test_ordering(num_ints: usize, expansion_factor: usize) {
+    let mut rng = rand::thread_rng();
 
-    let ope = OrderPreservingEncryption::new(block_size, expansion_factor);
+    let ope = OrderPreservingEncryption::new(expansion_factor);
 
     println!(
         "Order-preserving encryption on {} u64s with expansion factor = {}:",
         num_ints, expansion_factor
     );
-    println!(
-        "- Ciphertext length: {} bytes",
-        ope.ciphertext_len_in_bytes()
-    );
+    println!("- Ciphertext length: {} bytes", expansion_factor);
     println!(
         "- Upper bound on expected failure rate: 1 / 2^{}\n",
         ope.inverted_log_failure_rate()
@@ -50,10 +47,9 @@ fn test_ordering(num_ints: usize, block_size: usize, expansion_factor: usize) {
         "Randomly sampling {} 64-bit integers and sorting them...",
         num_ints
     );
-    let mut plaintexts = vec![];
-    for _ in 0..num_ints {
-        plaintexts.push(rng.next_u64());
-    }
+
+    let start = rng.next_u64();
+    let mut plaintexts: Vec<u64> = (start..start + num_ints as u64).collect();
     plaintexts.sort_unstable();
     plaintexts.dedup(); // Get rid of repeats
 
@@ -67,7 +63,7 @@ fn test_ordering(num_ints: usize, block_size: usize, expansion_factor: usize) {
     let mut ciphertexts = vec![];
     let mut plaintexts_to_ciphertexts = HashMap::new();
     for &plaintext in &plaintexts {
-        let ciphertext = ope.encrypt(&key, plaintext);
+        let ciphertext = ope.encrypt(&key, plaintext.to_string()).unwrap();
         ciphertexts.push(ciphertext.clone());
         plaintexts_to_ciphertexts.insert(plaintext, ciphertext.clone());
     }
