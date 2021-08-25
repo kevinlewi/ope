@@ -94,7 +94,7 @@ impl Ciphertext {
     /// Computes a PRF with a key, an input, and with a specified output size
     fn prf(key: &[u8], input: &[u8], output_size_in_bytes: usize) -> Self {
         let mut okm = vec![0u8; output_size_in_bytes];
-        let h = Hkdf::<Sha256>::from_prk(key).unwrap();
+        let h = Hkdf::<Sha256>::new(None, key);
         h.expand(input, &mut okm).unwrap();
         Self(okm.to_vec())
     }
